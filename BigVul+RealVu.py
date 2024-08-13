@@ -22,7 +22,7 @@ torch.cuda.manual_seed(seed)
 np.random.seed(seed)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
-
+a
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print("Using device: ", device)
 model_ckpt_c = 'neulab/codebert-c'
@@ -51,6 +51,7 @@ data['truncated_code'] = (data['code'].apply(data_cleaning, args=(comment_regex,
                          )
 length_check = np.array([len(x) for x in data['truncated_code']]) > 15000
 data = data[~length_check]
+
 from datasets import Dataset, DatasetDict
 #dts = Dataset.from_pandas(data)
 dts = DatasetDict()
@@ -84,8 +85,12 @@ def filter_and_clean_dataset(dataset):
 dts_realvu['test'] = filter_and_clean_dataset(dts_realvu['test'])
 dts = DatasetDict({
     "train" : dts["train"],
-    "test" : dts_realvu["test"] 
+    "test" : dts_realvu["test"]
 })
+print(dts)
+train_sample = pd.DataFrame(dts["train"])
+test_sample = pd.DataFrame(dts["test"])
+data = pd.concat([train_sample, test_sample], ignore_index=True)
 def tokenizer_func(examples):
     result = tokenizer(examples['code'], max_length=512, padding='max_length', truncation=True)
     return result
@@ -238,9 +243,6 @@ def compute_metrics(eval_pred):
             'precision': precision_score(y_true, y_pred),
             'recall': recall_score(y_true, y_pred),
             'f1': f1_score(y_true, y_pred)}
-train_sample = pd.DataFrame(dts["train"])
-test_sample = pd.DataFrame(dts["test"])
-data = pd.concat([train_sample, test_sample], ignore_index=True)
 model = CodeBertModel(model_ckpt = model_name, max_seq_length=512, chunk_size = 512, num_heads=4).to(device)
 import torch
 from torch.utils.data import DataLoader, TensorDataset
@@ -300,11 +302,11 @@ plt.close()
 
 # Lấy embeddings sau khi qua transformer_encoder
 all_transformed_data = []
-
-for embedded_chunk in torch.split(torch.tensor(all_embedded_chunks), 5, dim=0):
+for embedded_chunk in torch.split(torch.tensor(all_embedded_chunks),pad_chunk_mask.size()[0], dim=0):
     with torch.no_grad():
         embedded_chunk =  embedded_chunk.unsqueeze(0).to(device)
         embedded_chunk = model.positional_encoding(embedded_chunk)
+        pad_chunk_mask = pad_chunk_mask[:embedded_chunk.size(1),:]
         transformed_data = model.transformer_encoder(embedded_chunk, src_key_padding_mask=pad_chunk_mask).cpu().numpy()
         all_transformed_data.append(transformed_data)
 
@@ -334,7 +336,7 @@ training_arguments = TrainingArguments(output_dir = './modelsave',
                                       per_device_eval_batch_size = 5,
                                       gradient_accumulation_steps = 12,
                                       learning_rate = 3e-5,
-                                      num_train_epochs = 20,
+                                      num_train_epochs = 2,
                                       warmup_ratio = 0.1,
                                       lr_scheduler_type = 'cosine',
                                       logging_strategy = 'steps',
@@ -412,10 +414,11 @@ plt.close()
 # Lấy embeddings sau khi qua transformer_encoder
 all_transformed_data = []
 
-for embedded_chunk in torch.split(torch.tensor(all_embedded_chunks), 5, dim=0):
+for embedded_chunk in torch.split(torch.tensor(all_embedded_chunks), pad_chunk_mask.size()[0], dim=0):
     with torch.no_grad():
         embedded_chunk =  embedded_chunk.unsqueeze(0).to(device)
         embedded_chunk = model.positional_encoding(embedded_chunk)
+        pad_chunk_mask = pad_chunk_mask[:embedded_chunk.size(1),:]
         transformed_data = model.transformer_encoder(embedded_chunk, src_key_padding_mask=pad_chunk_mask).cpu().numpy()
         all_transformed_data.append(transformed_data)
 
