@@ -238,8 +238,8 @@ def compute_metrics(eval_pred):
             'precision': precision_score(y_true, y_pred),
             'recall': recall_score(y_true, y_pred),
             'f1': f1_score(y_true, y_pred)}
-train_sample = pd.DataFrame(train_sample)
-test_sample = pd.DataFrame(test_sample)
+train_sample = pd.DataFrame(dts["train"])
+test_sample = pd.DataFrame(dts["test"])
 data = pd.concat([train_sample, test_sample], ignore_index=True)
 model = CodeBertModel(model_ckpt = model_name, max_seq_length=512, chunk_size = 512, num_heads=4).to(device)
 import torch
