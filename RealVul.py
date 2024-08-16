@@ -31,7 +31,7 @@ model_ckpt_t5 = 'Salesforce/codet5p-110m-embedding'
 model_ckpt_unixcoder = 'microsoft/unixcoder-base'
 model_codesage_small = 'codesage/codesage-small'
 model_roberta = 'FacebookAI/roberta-base'
-model_name = model_ckpt_t5 
+model_name = model_ckpt_t5
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 from datasets import load_dataset
 
@@ -66,7 +66,11 @@ def filter_and_clean_dataset(dataset):
 # Clean and filter both train and test datasets and update the dataset_dict
 dts['train'] = filter_and_clean_dataset(dts['train'])
 dts['test'] = filter_and_clean_dataset(dts['test'])
+train_df = pd.DataFrame(dts['train'])
+test_df = pd.DataFrame(dts['test'])
 
+# Kết hợp train và test lại với nhau
+data = pd.concat([train_df, test_df], ignore_index=True)
 def tokenizer_func(examples):
     result = tokenizer(examples['code'], max_length=512, padding='max_length', truncation=True)
     return result
@@ -219,7 +223,85 @@ def compute_metrics(eval_pred):
             'precision': precision_score(y_true, y_pred),
             'recall': recall_score(y_true, y_pred),
             'f1': f1_score(y_true, y_pred)}
-model = CodeBertModel(model_ckpt = model_name, max_seq_length=512, chunk_size = 512, num_heads=4)
+model = CodeBertModel(model_ckpt = model_name, max_seq_length=512, chunk_size = 512, num_heads=4).to(device)
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+import numpy as np
+from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+batch_size = 5  # Kích thước batch nhỏ
+
+# Tokenize dữ liệu và chuyển đổi thành TensorDataset
+tokenized_data = tokenizer(list(data['code']), max_length=512, padding='max_length', truncation=True, return_tensors='pt')
+input_ids = tokenized_data['input_ids']
+attention_mask = tokenized_data['attention_mask']
+labels = torch.tensor(data['target'].values)
+
+# Tạo DataLoader để xử lý theo batch
+dataset = TensorDataset(input_ids, attention_mask, labels)
+data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
+# Khởi tạo mảng để lưu trữ embeddings
+all_embedded_chunks = []
+all_labels = []
+
+# Xử lý từng batch
+for batch in data_loader:
+    input_ids_batch, attention_mask_batch, labels_batch = batch
+    input_ids_batch = input_ids_batch.to(device)
+    attention_mask_batch = attention_mask_batch.to(device)
+
+    # Tính toán embeddings trước transformer_encoder
+    with torch.no_grad():
+        chunked_input_ids, chunked_attention_mask, pad_chunk_mask = model.prepare_chunk(input_ids_batch, attention_mask_batch)
+        num_chunk, B, chunk_size = chunked_input_ids.shape
+        chunked_input_ids, chunked_attention_mask = chunked_input_ids.contiguous().view(-1, chunk_size), chunked_attention_mask.contiguous().view(-1, model.chunk_size)
+        embedded_chunks = (model.embedding_model(input_ids = chunked_input_ids,
+                                                attention_mask = chunked_attention_mask) # (B * num_chunk, self.embedding_model.config.hidden_dim)
+                               .view(num_chunk, B, -1).to("cpu")
+                          )
+
+    # Lưu trữ kết quả vào mảng
+    all_embedded_chunks.append(embedded_chunks)
+    all_labels.append(labels_batch)
+
+# Nối tất cả các embeddings lại
+all_embedded_chunks = torch.cat(all_embedded_chunks, dim=1).view(-1, embedded_chunks.size(-1)).numpy()
+all_labels = torch.cat(all_labels).numpy()
+# Thực hiện t-SNE trước khi qua transformer_encoder
+tsne_before = TSNE(n_components=2, random_state=seed).fit_transform(all_embedded_chunks)
+
+# Visualize kết quả t-SNE trước khi qua transformer_encoder
+plt.figure(figsize=(8, 8))
+sns.scatterplot(x=tsne_before[:, 0], y=tsne_before[:, 1], hue=all_labels)
+plt.title('t-SNE Visualization Before Transformer Not Train')
+plt.savefig('tsne_before_transformer_encoder_while_not_train.png')
+plt.close()
+
+# Lấy embeddings sau khi qua transformer_encoder
+all_transformed_data = []
+for embedded_chunk in torch.split(torch.tensor(all_embedded_chunks),pad_chunk_mask.size()[0], dim=0):
+    with torch.no_grad():
+        embedded_chunk =  embedded_chunk.unsqueeze(0).to(device)
+        embedded_chunk = model.positional_encoding(embedded_chunk)
+        pad_chunk_mask = pad_chunk_mask[:embedded_chunk.size(1),:]
+        transformed_data = model.transformer_encoder(embedded_chunk, src_key_padding_mask=pad_chunk_mask).cpu().numpy()
+        all_transformed_data.append(transformed_data)
+
+# Nối tất cả các transformed embeddings lại
+all_transformed_data = np.concatenate(all_transformed_data, axis=1).reshape(-1, transformed_data.shape[-1])
+
+# Thực hiện t-SNE sau khi qua transformer_encoder
+tsne_after = TSNE(n_components=2, random_state=seed).fit_transform(all_transformed_data)
+
+# Visualize kết quả t-SNE sau khi qua transformer_encoder
+plt.figure(figsize=(8, 8))
+sns.scatterplot(x=tsne_after[:, 0], y=tsne_after[:, 1], hue=all_labels)
+plt.title('t-SNE Visualization After Transformer Not Train')
+plt.savefig('tsne_after_transformer_encoder_trained_not_train.png')  # Lưu ảnh vào file
+plt.close()
 from transformers import DataCollatorWithPadding
 import os
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
@@ -234,7 +316,7 @@ training_arguments = TrainingArguments(output_dir = './modelsave',
                                       per_device_eval_batch_size = 5,
                                       gradient_accumulation_steps = 12,
                                       learning_rate = 3e-5,
-                                      num_train_epochs = 50,
+                                      num_train_epochs = 20,
                                       warmup_ratio = 0.1,
                                       lr_scheduler_type = 'cosine',
                                       logging_strategy = 'steps',
@@ -253,3 +335,84 @@ trainer = Trainer(model=model,
                   compute_metrics=compute_metrics,
                  )
 trainer.train()
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+import numpy as np
+from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+batch_size = 5  # Kích thước batch nhỏ
+
+# Tokenize dữ liệu và chuyển đổi thành TensorDataset
+tokenized_data = tokenizer(list(data['code']), max_length=512, padding='max_length', truncation=True, return_tensors='pt')
+input_ids = tokenized_data['input_ids']
+attention_mask = tokenized_data['attention_mask']
+labels = torch.tensor(data['target'].values)
+
+# Tạo DataLoader để xử lý theo batch
+dataset = TensorDataset(input_ids, attention_mask, labels)
+data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
+# Khởi tạo mảng để lưu trữ embeddings
+all_embedded_chunks = []
+all_labels = []
+
+# Xử lý từng batch
+for batch in data_loader:
+    input_ids_batch, attention_mask_batch, labels_batch = batch
+    input_ids_batch = input_ids_batch.to(device)
+    attention_mask_batch = attention_mask_batch.to(device)
+
+    # Tính toán embeddings trước transformer_encoder
+    with torch.no_grad():
+        chunked_input_ids, chunked_attention_mask, pad_chunk_mask = model.prepare_chunk(input_ids_batch, attention_mask_batch)
+        num_chunk, B, chunk_size = chunked_input_ids.shape
+        chunked_input_ids, chunked_attention_mask = chunked_input_ids.contiguous().view(-1, chunk_size), chunked_attention_mask.contiguous().view(-1, model.chunk_size)
+        embedded_chunks = (model.embedding_model(input_ids = chunked_input_ids,
+                                                attention_mask = chunked_attention_mask) # (B * num_chunk, self.embedding_model.config.hidden_dim)
+                               .view(num_chunk, B, -1).to("cpu")
+                          )
+
+    # Lưu trữ kết quả vào mảng
+    all_embedded_chunks.append(embedded_chunks)
+    all_labels.append(labels_batch)
+
+# Nối tất cả các embeddings lại
+all_embedded_chunks = torch.cat(all_embedded_chunks, dim=1).view(-1, embedded_chunks.size(-1)).numpy()
+all_labels = torch.cat(all_labels).numpy()
+# Thực hiện t-SNE trước khi qua transformer_encoder
+tsne_before = TSNE(n_components=2, random_state=seed).fit_transform(all_embedded_chunks)
+
+# Visualize kết quả t-SNE trước khi qua transformer_encoder
+plt.figure(figsize=(8, 8))
+sns.scatterplot(x=tsne_before[:, 0], y=tsne_before[:, 1], hue=all_labels)
+plt.title('t-SNE Visualization Before Transformer Trained')
+plt.show()
+plt.savefig('tsne_before_transformer_encoder_trained.png')
+plt.close()
+
+# Lấy embeddings sau khi qua transformer_encoder
+all_transformed_data = []
+
+for embedded_chunk in torch.split(torch.tensor(all_embedded_chunks), pad_chunk_mask.size()[0], dim=0):
+    with torch.no_grad():
+        embedded_chunk =  embedded_chunk.unsqueeze(0).to(device)
+        embedded_chunk = model.positional_encoding(embedded_chunk)
+        pad_chunk_mask = pad_chunk_mask[:embedded_chunk.size(1),:]
+        transformed_data = model.transformer_encoder(embedded_chunk, src_key_padding_mask=pad_chunk_mask).cpu().numpy()
+        all_transformed_data.append(transformed_data)
+
+# Nối tất cả các transformed embeddings lại
+all_transformed_data = np.concatenate(all_transformed_data, axis=1).reshape(-1, transformed_data.shape[-1])
+
+# Thực hiện t-SNE sau khi qua transformer_encoder
+tsne_after = TSNE(n_components=2, random_state=seed).fit_transform(all_transformed_data)
+
+# Visualize kết quả t-SNE sau khi qua transformer_encoder
+plt.figure(figsize=(8, 8))
+sns.scatterplot(x=tsne_after[:, 0], y=tsne_after[:, 1], hue=all_labels)
+plt.title('t-SNE Visualization After Transformer Encoder Trained')
+plt.show()
+plt.savefig('tsne_after_transformer_encoder_trained.png')  # Lưu ảnh vào file
+plt.close()
