@@ -239,8 +239,8 @@ if not os.path.exists(directory):
 
 training_arguments = TrainingArguments(output_dir = './modelsave',
                                       evaluation_strategy = 'epoch',
-                                      per_device_train_batch_size = 5,
-                                      per_device_eval_batch_size = 5,
+                                      per_device_train_batch_size = 1,
+                                      per_device_eval_batch_size = 1,
                                       gradient_accumulation_steps = 12,
                                       learning_rate =  3e-5,
                                       num_train_epochs = 20,
