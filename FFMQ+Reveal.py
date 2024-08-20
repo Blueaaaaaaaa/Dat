@@ -315,7 +315,8 @@ results_df = pd.DataFrame({
 results_csv_path = 'prediction_results.csv'
 results_df.to_csv(results_csv_path, index=False)
 
-print(f'Results have been saved to {results_csv_path}')import re
+print(f'Results have been saved to {results_csv_path}')
+import re
 import os
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments, AutoModel
