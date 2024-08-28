@@ -41,6 +41,20 @@ dts = DatasetDict({
     'train': dts['train'].remove_columns([col for col in dts['train'].column_names if col not in ['target', 'code']]),
     'test': dts['test'].remove_columns([col for col in dts['test'].column_names if col not in ['target', 'code']])
 })
+
+
+from datasets import concatenate_datasets
+combined_dataset = concatenate_datasets([dts['train'], dts['test']])
+shuffled_dataset = combined_dataset.shuffle(seed=42)
+split_datasets = shuffled_dataset.train_test_split(test_size=0.2)
+
+# Lấy tập train và test mới
+new_train_dataset = split_datasets['train']
+new_test_dataset = split_datasets['test']
+
+# Cập nhật lại vào DatasetDict nếu cần
+dts['train'] = new_train_dataset
+dts['test'] = new_test_dataset
 comment_regex = r'(//[^\n]*|\/\*[\s\S]*?\*\/)'
 newline_regex = '\n{1,}'
 whitespace_regex = '\s{2,}'
