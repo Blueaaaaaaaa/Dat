@@ -41,20 +41,6 @@ dts = DatasetDict({
     'train': dts['train'].remove_columns([col for col in dts['train'].column_names if col not in ['target', 'code']]),
     'test': dts['test'].remove_columns([col for col in dts['test'].column_names if col not in ['target', 'code']])
 })
-
-
-from datasets import concatenate_datasets
-combined_dataset = concatenate_datasets([dts['train'], dts['test']])
-shuffled_dataset = combined_dataset.shuffle(seed=42)
-split_datasets = shuffled_dataset.train_test_split(test_size=0.2)
-
-# Lấy tập train và test mới
-new_train_dataset = split_datasets['train']
-new_test_dataset = split_datasets['test']
-
-# Cập nhật lại vào DatasetDict nếu cần
-dts['train'] = new_train_dataset
-dts['test'] = new_test_dataset
 comment_regex = r'(//[^\n]*|\/\*[\s\S]*?\*\/)'
 newline_regex = '\n{1,}'
 whitespace_regex = '\s{2,}'
@@ -80,10 +66,8 @@ def filter_and_clean_dataset(dataset):
 # Clean and filter both train and test datasets and update the dataset_dict
 dts['train'] = filter_and_clean_dataset(dts['train'])
 dts['test'] = filter_and_clean_dataset(dts['test'])
-train_df = pd.DataFrame(dts['train'])
-test_df = pd.DataFrame(dts['test'])
-
-# Kết hợp train và test lại với nhau
+train_df = dts['train'].to_pandas()
+test_df = dts['test'].to_pandas()
 data = pd.concat([train_df, test_df], ignore_index=True)
 def tokenizer_func(examples):
     result = tokenizer(examples['code'], max_length=512, padding='max_length', truncation=True)
@@ -100,7 +84,7 @@ dts["train"] = dts["train"].rename_column("target", "label")
 dts["test"] = dts["test"].rename_column("target", "label")
 import torch.nn as nn
 class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len, dropout=0.1, padding_idx=0):
+    def __init__(self, d_model, max_len, dropout=0.3, padding_idx=0):
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
         self.pos_encoding = nn.Embedding(max_len, d_model, padding_idx=padding_idx)
@@ -146,7 +130,7 @@ class CodeBertModel(nn.Module):
         self.loss_func = nn.CrossEntropyLoss(weight=torch.Tensor([1.0, 6.0]),
                                              label_smoothing=0.2)
 
-        self.ffn = nn.Sequential(nn.Dropout(p=0.1),
+        self.ffn = nn.Sequential(nn.Dropout(p=0.3),
                                  nn.Linear(embed_dim, 2)
                                  )
         self.chunk_size = chunk_size
@@ -331,7 +315,7 @@ training_arguments = TrainingArguments(output_dir = './modelsave',
                                       gradient_accumulation_steps = 12,
                                       learning_rate = 3e-5,
                                       num_train_epochs = 20,
-                                      warmup_ratio = 0.1,
+                                      warmup_ratio = 0.15,
                                       lr_scheduler_type = 'cosine',
                                       logging_strategy = 'steps',
                                       logging_steps = 10,
@@ -402,7 +386,6 @@ tsne_before = TSNE(n_components=2, random_state=seed).fit_transform(all_embedded
 plt.figure(figsize=(8, 8))
 sns.scatterplot(x=tsne_before[:, 0], y=tsne_before[:, 1], hue=all_labels)
 plt.title('t-SNE Visualization Before Transformer Trained')
-plt.show()
 plt.savefig('tsne_before_transformer_encoder_trained.png')
 plt.close()
 
@@ -427,6 +410,5 @@ tsne_after = TSNE(n_components=2, random_state=seed).fit_transform(all_transform
 plt.figure(figsize=(8, 8))
 sns.scatterplot(x=tsne_after[:, 0], y=tsne_after[:, 1], hue=all_labels)
 plt.title('t-SNE Visualization After Transformer Encoder Trained')
-plt.show()
 plt.savefig('tsne_after_transformer_encoder_trained.png')  # Lưu ảnh vào file
 plt.close()
